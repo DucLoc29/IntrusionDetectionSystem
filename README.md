@@ -29,7 +29,7 @@ Detects anomalies in network traffic and system logs using LSTM Autoencoder with
 
 ## Overview
 
-INITNET IDS is a real-time Intrusion Detection System that combines two approaches:
+IDS is a real-time Intrusion Detection System that combines two approaches:
 
 - **Unsupervised Learning** (LSTM Autoencoder, Dense Autoencoder): Detects anomalies via reconstruction error - no attack labels required, enabling detection of **zero-day attacks**.
 - **Supervised Learning** (Random Forest): Used as a performance baseline for comparison.
