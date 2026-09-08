@@ -1,4 +1,4 @@
-# INITNET IDS — Intrusion Detection System
+﻿# INITNET IDS - Intrusion Detection System
 
 <div align="center">
 
@@ -6,281 +6,263 @@
 ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange?style=flat-square&logo=tensorflow)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-f7931e?style=flat-square&logo=scikit-learn)
 
-**Hệ thống phát hiện xâm nhập mạng dựa trên học máy không giám sát**
+**A real-time network intrusion detection system powered by unsupervised deep learning**
 
-Phát hiện bất thường trong network traffic và system logs theo thời gian thực  
-bằng LSTM Autoencoder — pipeline streaming đa luồng.
-
-*Đồ án môn học — Nhóm INITNET*
+Detects anomalies in network traffic and system logs using LSTM Autoencoder with a concurrent multi-threaded streaming pipeline.
 
 </div>
 
 ---
 
-## Mục lục
+## Table of Contents
 
-- [Giới thiệu](#giới-thiệu)
-- [Kiến trúc hệ thống](#kiến-trúc-hệ-thống)
-- [Cấu trúc Project](#cấu-trúc-project)
-- [Cài đặt](#cài-đặt)
-- [Hướng dẫn sử dụng](#hướng-dẫn-sử-dụng)
-- [Mô hình ML](#mô-hình-ml)
-- [Threshold Động](#threshold-động)
-- [Kết quả thực nghiệm](#kết-quả-thực-nghiệm)
-- [Phân công nhóm](#phân-công-nhóm)
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+- [Usage](#usage)
+- [ML Models](#ml-models)
+- [Dynamic Thresholding](#dynamic-thresholding)
+- [Results](#results)
 
 ---
 
-## Giới thiệu
+## Overview
 
-INITNET IDS là hệ thống phát hiện xâm nhập (Intrusion Detection System) kết hợp hai hướng tiếp cận:
+INITNET IDS is a real-time Intrusion Detection System that combines two approaches:
 
-- **Unsupervised Learning** (LSTM Autoencoder, Dense Autoencoder): Phát hiện bất thường dựa trên reconstruction error — không cần nhãn tấn công → có khả năng phát hiện **zero-day attacks**.
-- **Supervised Learning** (Random Forest): Làm baseline để đối chiếu hiệu năng.
+- **Unsupervised Learning** (LSTM Autoencoder, Dense Autoencoder): Detects anomalies via reconstruction error - no attack labels required, enabling detection of **zero-day attacks**.
+- **Supervised Learning** (Random Forest): Used as a performance baseline for comparison.
 
-Hệ thống xử lý song song hai nguồn dữ liệu:
+The system processes two data sources in parallel:
 
-| Nguồn | Mô tả | Tiền xử lý |
+| Source | Description | Preprocessing |
 |---|---|---|
-| **Network Traffic** | Luồng IP (flow features) | MinMaxScaler |
-| **System Log (HDFS)** | Chuỗi event log | TF-IDF Vectorizer (32 features) |
+| **Network Traffic** | IP flow features | MinMaxScaler |
+| **System Log (HDFS)** | Event log sequences | TF-IDF Vectorizer (32 features) |
 
 ---
 
-## Kiến trúc hệ thống
+## System Architecture
 
-### Pipeline Streaming Đa Luồng (3 Thread)
+### Concurrent 3-Thread Streaming Pipeline
 
 ```
-demo_log.csv     ──► [Thread 1: LogIngestionThread]   ──► log_queue     ──► [Thread 3a: InferenceThread-Log]     ──► Alert Log
-demo_traffic.csv ──► [Thread 2: PacketAnalysisThread]  ──► traffic_queue ──► [Thread 3b: InferenceThread-Traffic] ──► Alert Traffic
+demo_log.csv     --> [Thread 1: LogIngestionThread]   --> log_queue     --> [Thread 3a: InferenceThread-Log]     --> Alert
+demo_traffic.csv --> [Thread 2: PacketAnalysisThread] --> traffic_queue --> [Thread 3b: InferenceThread-Traffic] --> Alert
 ```
 
-| Thread | Nhiệm vụ |
+| Thread | Responsibility |
 |---|---|
-| `LogIngestionThread` | Đọc log CSV → parse EventSequence → TF-IDF vectorize → đẩy queue |
-| `PacketAnalysisThread` | Đọc traffic CSV → MinMax scale → tạo sliding window (step=5) → đẩy queue |
-| `InferenceThread` | Lấy từ queue → LSTM-AE inference → so threshold → phát cảnh báo real-time |
+| `LogIngestionThread` | Read log CSV, parse EventSequence, TF-IDF vectorize, push to queue |
+| `PacketAnalysisThread` | Read traffic CSV, MinMax scale, create sliding window (step=5), push to queue |
+| `InferenceThread` | Dequeue, LSTM-AE inference, compare threshold, emit real-time alert |
 
-### Tổng quan hệ thống
+### System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                       StreamingPipeline                      │
-│                                                              │
-│  [CSV Data] ──► [Ingestion Threads] ──► [Queues]            │
-│                                              │               │
-│                                     [Inference Threads]      │
-│                                              │               │
-│                           ┌──────────────────┴──────────┐    │
-│                           │  LSTM Autoencoder            │    │
-│                           │  Dynamic Threshold           │    │
-│                           │  Alert + Metrics             │    │
-│                           └─────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
-                                │
-               ┌────────────────┼────────────────┐
-               ▼                ▼                ▼
-         Terminal Alerts   Dashboard PNG    Metrics Report
+[CSV Data] --> [Ingestion Threads] --> [Queues] --> [Inference Threads] --> LSTM-AE + Dynamic Threshold --> Alerts
+                                                                                    |
+                                          Terminal Alerts | Dashboard PNG | Metrics Report
 ```
 
 ---
 
-## Cấu trúc Project
+## Project Structure
 
 ```
 IDS_Project/
-│
-├── datas/                              # Dữ liệu đầu vào
-│   ├── train_traffic.csv               # Network traffic bình thường (20,000 flows, ~7MB)
-│   ├── demo_traffic.csv                # Traffic hỗn hợp có nhãn tấn công (1,786 flows)
-│   ├── train_log.csv                   # HDFS log bình thường (5,000 sequences, ~970KB)
-│   └── demo_log.csv                    # Log hỗn hợp có nhãn (1,000 sequences)
-│
-├── model/                              # Các model đã train
-│   ├── autoencoder_traffic.h5          # LSTM Autoencoder — Traffic (train trên Colab)
-│   ├── autoencoder_log.h5              # LSTM Autoencoder — Log (train trên Colab)
-│   ├── dense_autoencoder_traffic.h5    # Dense Autoencoder — Traffic
-│   ├── dense_autoencoder_log.h5        # Dense Autoencoder — Log
-│   ├── network_scaler.pkl              # MinMaxScaler đã fit trên train_traffic
-│   ├── log_vectorizer.pkl              # TF-IDF Vectorizer đã fit trên train_log
-│   ├── rf_traffic.pkl                  # Random Forest — Traffic (supervised)
-│   └── rf_log.pkl                      # Random Forest — Log (supervised)
-│
-├── src/
-│   ├── pipeline/
-│   │   ├── log_ingestion.py            # Thread 1: đọc log, vectorize, đẩy queue
-│   │   ├── packet_analysis.py          # Thread 2: đọc traffic, scale, tạo sequence, đẩy queue
-│   │   ├── model_inference.py          # Thread 3: inference, đo latency & memory, phát alert
-│   │   └── streaming_pipeline.py       # Orchestrator: khởi tạo và điều phối 3 thread
-│   │
-│   ├── models/
-│   │   └── dense_autoencoder.py        # Định nghĩa, train, và evaluate Dense Autoencoder
-│   │
-│   ├── analysis/
-│   │   ├── dynamic_threshold.py        # Các chiến lược tính threshold động
-│   │   ├── metrics.py                  # Accuracy, Precision, Recall, F1, AUC-ROC, Latency, Memory
-│   │   └── comparison.py               # So sánh Supervised vs Unsupervised
-│   │
-│   └── dashboard/
-│       └── realtime_dashboard.py       # Dashboard dark-mode (8 subplot, xuất PNG)
-│
-├── results/                            # Output sau khi chạy
-│   ├── threshold_analysis_traffic.png  # MSE distribution + F1 vs Threshold (Traffic)
-│   ├── threshold_analysis_log.png      # MSE distribution + F1 vs Threshold (Log)
-│   ├── demo_dashboard.png              # Dashboard tổng hợp sau demo
-│   └── comparison_table.csv            # Bảng so sánh metrics tất cả model
-│
-├── train_models.py                     # [SCRIPT] Train Dense AE + RF, phân tích, xuất kết quả
-├── run_demo.py                         # [SCRIPT] Demo pipeline streaming (dùng trước hội đồng)
-└── README.md
+|
++-- datas/                              # Input datasets
+|   +-- train_traffic.csv               # Normal network traffic (20,000 flows, ~7MB)
+|   +-- demo_traffic.csv                # Mixed traffic with attack labels (1,786 flows)
+|   +-- train_log.csv                   # Normal HDFS logs (5,000 sequences, ~970KB)
+|   +-- demo_log.csv                    # Mixed logs with labels (1,000 sequences)
+|
++-- model/                              # Trained model artifacts
+|   +-- autoencoder_traffic.h5          # LSTM Autoencoder - Traffic
+|   +-- autoencoder_log.h5              # LSTM Autoencoder - Log
+|   +-- dense_autoencoder_traffic.h5    # Dense Autoencoder - Traffic
+|   +-- dense_autoencoder_log.h5        # Dense Autoencoder - Log
+|   +-- network_scaler.pkl              # MinMaxScaler fitted on train_traffic
+|   +-- log_vectorizer.pkl              # TF-IDF Vectorizer fitted on train_log
+|   +-- rf_traffic.pkl                  # Random Forest - Traffic (supervised)
+|   +-- rf_log.pkl                      # Random Forest - Log (supervised)
+|
++-- src/
+|   +-- pipeline/
+|   |   +-- log_ingestion.py            # Thread 1: read logs, vectorize, push queue
+|   |   +-- packet_analysis.py          # Thread 2: read traffic, scale, create sequences, push queue
+|   |   +-- model_inference.py          # Thread 3: inference, measure latency & memory, emit alerts
+|   |   +-- streaming_pipeline.py       # Orchestrator: initialize and coordinate 3 threads
+|   |
+|   +-- models/
+|   |   +-- dense_autoencoder.py        # Dense Autoencoder definition, training, evaluation
+|   |
+|   +-- analysis/
+|   |   +-- dynamic_threshold.py        # Dynamic threshold strategies
+|   |   +-- metrics.py                  # Accuracy, Precision, Recall, F1, AUC-ROC, Latency, Memory
+|   |   +-- comparison.py               # Supervised vs Unsupervised comparison
+|   |
+|   +-- dashboard/
+|       +-- realtime_dashboard.py       # Dark-mode dashboard (8 subplots, exports PNG)
+|
++-- results/                            # Output after running
+|   +-- threshold_analysis_traffic.png  # MSE distribution + F1 vs Threshold (Traffic)
+|   +-- threshold_analysis_log.png      # MSE distribution + F1 vs Threshold (Log)
+|   +-- demo_dashboard.png              # Full analysis dashboard
+|   +-- comparison_table.csv            # Model comparison metrics table
+|
++-- train_models.py                     # Train Dense AE + RF, analyze thresholds, export results
++-- run_demo.py                         # Run the streaming pipeline demo
++-- README.md
 ```
 
 ---
 
-## Cài đặt
+## Installation
 
-### Yêu cầu
+### Requirements
 
 - Python 3.8+
 - pip
 
-### Cài dependencies
+### Install dependencies
 
 ```bash
 pip install tensorflow scikit-learn pandas numpy joblib psutil matplotlib
 ```
 
-Hoặc trên Linux/macOS dùng Python system:
+On Linux/macOS with system Python:
 
 ```bash
 pip3 install tensorflow scikit-learn pandas numpy joblib psutil matplotlib --break-system-packages
 ```
 
-> **Lưu ý:** Các model LSTM Autoencoder (`.h5`) đã được train sẵn trên Google Colab và lưu trong thư mục `model/`.
-> Nếu chưa có file Dense AE hoặc Random Forest, chạy `train_models.py` để tạo trước.
+> **Note:** LSTM Autoencoder models (`.h5`) are pre-trained and stored in `model/`.
+> Run `train_models.py` first if Dense Autoencoder or Random Forest files are missing.
 
 ---
 
-## Hướng dẫn sử dụng
+## Usage
 
-### Bước 1 — Train models & phân tích (tùy chọn)
+### Step 1 - Train and evaluate models (optional)
 
 ```bash
 python train_models.py
 ```
 
-Script thực hiện tuần tự:
+This script will:
 
-1. Load và tiền xử lý dữ liệu traffic & log
-2. Evaluate LSTM Autoencoder từ model `.h5` đã có
+1. Load and preprocess traffic and log data
+2. Evaluate the pre-trained LSTM Autoencoder
 3. Train Dense Autoencoder (Traffic + Log, 25 epochs)
 4. Train Random Forest Classifier (supervised baseline)
-5. Phân tích threshold động → vẽ biểu đồ MSE distribution và F1 vs Threshold
-6. Xuất bảng so sánh → `results/comparison_table.csv`
-7. Xuất biểu đồ → `results/threshold_analysis_*.png`
+5. Analyze dynamic thresholds and plot MSE distribution and F1 vs Threshold
+6. Export comparison table to `results/comparison_table.csv`
+7. Export plots to `results/threshold_analysis_*.png`
 
-### Bước 2 — Chạy Demo (pipeline streaming)
+### Step 2 - Run the streaming pipeline
 
 ```bash
 python run_demo.py
 ```
 
-Script thực hiện:
+This script will:
 
-1. Kiểm tra toàn bộ file model và data cần thiết
-2. Khởi động pipeline 3 thread song song
-3. In cảnh báo real-time lên terminal (NORMAL / ANOMALY)
-4. Sau khi hoàn tất → in báo cáo metrics đầy đủ
-5. Vẽ và lưu dashboard → `results/demo_dashboard.png`
+1. Validate all required model and data files
+2. Launch the 3-thread pipeline concurrently
+3. Print real-time alerts to the terminal (NORMAL / ANOMALY)
+4. Print a full metrics report after completion
+5. Render and save the dashboard to `results/demo_dashboard.png`
 
-**Các tham số pipeline** (chỉnh trong `run_demo.py`):
+**Pipeline parameters** (configurable in `run_demo.py`):
 
-| Tham số | Mặc định | Ý nghĩa |
+| Parameter | Default | Description |
 |---|---|---|
-| `traffic_threshold` | `0.013591` | Ngưỡng MSE Traffic (mean + 2×std) |
-| `log_threshold` | `0.014254` | Ngưỡng MSE Log (mean + 2×std) |
-| `time_steps` | `5` | Độ dài sliding window |
-| `delay_ms` | `15.0` | Delay giữa các batch (ms) |
-| `dynamic_threshold` | `True` | Bật cập nhật threshold động |
-| `timeout` | `600.0` | Thời gian chạy tối đa (giây) |
+| `traffic_threshold` | `0.013591` | MSE threshold for traffic (mean + 2*std) |
+| `log_threshold` | `0.014254` | MSE threshold for logs (mean + 2*std) |
+| `time_steps` | `5` | Sliding window length |
+| `delay_ms` | `15.0` | Delay between batches (ms) |
+| `dynamic_threshold` | `True` | Enable adaptive thresholding |
+| `timeout` | `600.0` | Maximum pipeline runtime (seconds) |
 
-Nhấn `Ctrl+C` để dừng pipeline an toàn (có signal handler tránh core dump TensorFlow).
+Press `Ctrl+C` to stop the pipeline safely (signal handler prevents TensorFlow core dump).
 
 ---
 
-## Mô hình ML
+## ML Models
 
 ### LSTM Autoencoder (Sequence-to-Sequence)
 
-Mô hình chính, train trên dữ liệu **bình thường** (unsupervised — không cần nhãn tấn công):
+The primary model, trained exclusively on **normal** data (unsupervised - no attack labels needed):
 
 ```
 Input (time_steps=5, features)
-  → LSTM(32, return_sequences=False)
-  → RepeatVector(5)
-  → LSTM(32, return_sequences=True)
-  → TimeDistributed(Dense(features))
-  → Output (5, features)
+  -> LSTM(32, return_sequences=False)
+  -> RepeatVector(5)
+  -> LSTM(32, return_sequences=True)
+  -> TimeDistributed(Dense(features))
+  -> Output (5, features)
 ```
 
-| Thông số | Giá trị |
+| Parameter | Value |
 |---|---|
 | Loss | MSE (Mean Squared Error) |
-| Threshold | `mean(train_MSE) + 2 × std(train_MSE)` |
-| Phát hiện | `reconstruction_error > threshold` → **ANOMALY** |
-| Sliding window | `time_steps = 5` |
+| Threshold | mean(train_MSE) + 2 * std(train_MSE) |
+| Detection rule | reconstruction_error > threshold -> **ANOMALY** |
+| Sliding window | time_steps = 5 |
 
 ### Dense Autoencoder (Tabular)
 
-Model nhẹ hơn, train trực tiếp qua `train_models.py`:
+A lighter model trained locally via `train_models.py`:
 
 ```
 Input(dim)
-  → Dense(32) + BatchNorm + ReLU
-  → Dense(16) + ReLU                  ← Bottleneck
-  → Dense(32) + BatchNorm + ReLU
-  → Dense(dim, sigmoid)
-  → Output(dim)
+  -> Dense(32) + BatchNorm + ReLU
+  -> Dense(16) + ReLU                  <- Bottleneck
+  -> Dense(32) + BatchNorm + ReLU
+  -> Dense(dim, sigmoid)
+  -> Output(dim)
 ```
 
-| Thông số | Giá trị |
+| Parameter | Value |
 |---|---|
 | Epochs | 25 |
 | Optimizer | Adam |
 | Loss | MSE |
 
-### Random Forest (Supervised — Baseline)
+### Random Forest (Supervised Baseline)
 
-- `n_estimators = 100`, train **với nhãn** (60% demo data).
-- Chỉ phát hiện được tấn công **đã biết** — dùng để so sánh, không dùng trong pipeline demo chính.
-
----
-
-## Threshold Động
-
-Hệ thống hỗ trợ 3 chiến lược tính threshold:
-
-| Chiến lược | Công thức | Mô tả |
-|---|---|---|
-| `mean_std` *(mặc định)* | `μ + k×σ` với `k=2.0` | Dựa trên phân phối train MSE |
-| `percentile` | `percentile(train_errors, 95)` | Tính theo phân vị |
-| `sliding_window` | Cập nhật liên tục | Tự điều chỉnh theo thời gian thực |
-
-**Kết quả phân tích F1 vs Threshold:**
-
-| Data | Best threshold (p90) | F1 tốt nhất |
-|---|---|---|
-| Network Traffic | `0.0107` | ~0.43 |
-| System Log | `0.0111` | ~0.62 |
+- `n_estimators = 100`, trained **with labels** (60% of demo data).
+- Detects only **known** attack patterns - used for comparison only, not in the main pipeline.
 
 ---
 
-## Kết quả thực nghiệm
+## Dynamic Thresholding
 
-### Bảng so sánh tổng hợp
+Three threshold strategies are supported:
 
-| Mô hình | Accuracy | Precision | Recall | F1-Score | AUC-ROC | Loại |
+| Strategy | Formula | Description |
+|---|---|---|
+| `mean_std` *(default)* | mu + k*sigma, k=2.0 | Based on train MSE distribution |
+| `percentile` | percentile(train_errors, 95) | Percentile-based cutoff |
+| `sliding_window` | Continuously updated | Adapts to real-time data drift |
+
+**F1 vs Threshold analysis results:**
+
+| Data | Best threshold (p90) | Best F1 |
+|---|---|---|
+| Network Traffic | 0.0107 | ~0.43 |
+| System Log | 0.0111 | ~0.62 |
+
+---
+
+## Results
+
+### Model Comparison
+
+| Model | Accuracy | Precision | Recall | F1-Score | AUC-ROC | Type |
 |---|---|---|---|---|---|---|
 | LSTM-AE (Traffic) | 0.5129 | 0.4320 | 0.3410 | 0.3812 | 0.5158 | Unsupervised |
 | Dense-AE (Traffic) | 0.6756 | **0.9157** | 0.2901 | 0.4406 | **0.8272** | Unsupervised |
@@ -289,24 +271,11 @@ Hệ thống hỗ trợ 3 chiến lược tính threshold:
 | Dense-AE (Log) | 0.7420 | **0.9481** | 0.5120 | 0.6649 | **0.7538** | Unsupervised |
 | **Random Forest (Log)** | **0.7550** | 0.9397 | 0.5450 | **0.6899** | N/A | Supervised |
 
-### Nhận xét
+### Key Takeaways
 
-- **Random Forest (Supervised):** F1 vượt trội, nhưng chỉ phát hiện được tấn công **đã thấy trong tập train** — không phát hiện được zero-day.
-- **Dense-AE Traffic:** Precision = 0.92, AUC-ROC = 0.83 — ít False Positive, phù hợp môi trường production.
-- **LSTM-AE Log:** Recall = 0.71 — bắt được nhiều anomaly nhất trong dữ liệu log.
-- **Ưu điểm then chốt của Unsupervised:** Không cần nhãn tấn công → phát hiện được **zero-day attacks** và hành vi bất thường chưa từng gặp.
-
----
-
-## Phân công nhóm
-
-| Thành viên | Nhiệm vụ |
-|---|---|
-| Member 1 | Data preprocessing, Train LSTM Autoencoder trên Google Colab |
-| Member 2 | Pipeline streaming 3 thread (`pipeline/`), đo latency & memory |
-| Member 3 | Dense Autoencoder (`models/`), so sánh Supervised, phân tích Threshold động |
-| Member 4 | Dashboard (`dashboard/`), demo script (`run_demo.py`), báo cáo |
+- **Random Forest (Supervised):** Highest F1, but only detects **known** attack patterns - unable to generalize to unseen threats.
+- **Dense-AE Traffic:** Precision = 0.92, AUC-ROC = 0.83 - low false positive rate, suitable for production environments.
+- **LSTM-AE Log:** Recall = 0.71 - highest anomaly capture rate on log data.
+- **Core advantage of unsupervised approach:** No labeled attack data required, capable of detecting **zero-day attacks** and previously unseen malicious behavior.
 
 ---
-
-*Dự án phát triển cho mục đích học thuật trong khuôn khổ đồ án môn học.*
