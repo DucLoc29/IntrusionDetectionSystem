@@ -1,4 +1,4 @@
-﻿# INITNET IDS - Intrusion Detection System
+﻿# IDS - Intrusion Detection System
 
 <div align="center">
 
