@@ -1,0 +1,7 @@
+﻿Mô hình,Accuracy,Precision,Recall,F1-Score,AUC-ROC,Loại
+LSTM Autoencoder (Traffic),0.5129,0.4320,0.3410,0.3812,0.5158,Unsupervised
+Dense Autoencoder (Traffic),0.6756,0.9157,0.2901,0.4406,0.8272,Unsupervised
+Random Forest (Traffic),0.9916,0.9936,0.9873,0.9904,N/A,Supervised
+LSTM Autoencoder (Log),0.5156,0.5101,0.7117,0.5943,0.5127,Unsupervised
+Dense Autoencoder (Log),0.7420,0.9481,0.5120,0.6649,0.7538,Unsupervised
+Random Forest (Log),0.7550,0.9397,0.5450,0.6899,N/A,Supervised
